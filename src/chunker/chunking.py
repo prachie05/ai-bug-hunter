@@ -29,6 +29,17 @@ def get_effective_start_lineno(node):
     else:
         return node.lineno
 
+def is_overload_function(node):
+    for decorator in node.decorator_list:
+        if isinstance(decorator, ast.Name) and decorator.id =="overload" or isinstance(decorator,ast.Attribute) and decorator.attr =="overload":
+            return True
+
+    return False
+
+
+
+
+
 def build_chunk(node, node_type, source, file_path, is_generated, parent_class=None,end_line=None):
     start_line = get_effective_start_lineno(node)
     if end_line is None:
@@ -56,7 +67,8 @@ class ChunkVisitor(ast.NodeVisitor):
 
 
     def visit_FunctionDef(self, node):
-        
+        if(is_overload_function(node)):
+            return
         node_type = ChunkType.METHOD if self.current_class else ChunkType.FUNCTION
         chunk = build_chunk(
             node=node,node_type=node_type,source=self.source,file_path=self.file_path,
@@ -65,6 +77,8 @@ class ChunkVisitor(ast.NodeVisitor):
 
 
     def visit_AsyncFunctionDef(self, node):
+        if(is_overload_function(node)):
+            return
         node_type = ChunkType.METHOD if self.current_class else ChunkType.ASYNC_FUNCTION
         chunk = build_chunk(node,node_type,self.source, self.file_path, 
                             self.is_generated, self.current_class)
@@ -83,7 +97,7 @@ class ChunkVisitor(ast.NodeVisitor):
                                     is_generated=self.is_generated,end_line=end_line)
 
                 self.chunks.append(chunk)
-                
+
             self.current_class = node.name
             for child in node.body:
                 self.visit(child)

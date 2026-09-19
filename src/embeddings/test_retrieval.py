@@ -10,7 +10,7 @@ index_path = "data/click.index"
 chunk_path = "data/click_chunks.pkl"
 
 store = VectorStore(dimension=1536)
-backend = OpenAIEmbeddingBackend()
+backend = OpenAIEmbeddingBackend("text-embedding-3-small")
 if not os.path.exists(index_path) or not os.path.exists(chunk_path):
     chunks = []
 
@@ -50,6 +50,8 @@ else:
     store.load(index_path)
     store.load_chunks(chunk_path)
 
+print("Model: text-embedding-3-small")
+print("k: 10")
 
 queries = [
     "Where does Click parse command line arguments?",
@@ -68,5 +70,5 @@ for query, query_embedding in zip(queries,query_embeddings):
         print("Score:", score)
         print("File:", chunk.file_path)
         print("Symbol:", chunk.name)
-        print(chunk.content)
+        #print(chunk.content)
 
