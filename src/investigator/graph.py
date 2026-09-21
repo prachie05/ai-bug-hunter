@@ -1,6 +1,7 @@
 from langgraph.graph import END, START, StateGraph
 from openai import OpenAI
 
+from src.config import INVESTIGATOR_MODEL
 from src.embeddings.bm25 import BM25Index
 from src.embeddings.hybrid import hybrid_search
 from src.embeddings.openai_backend import OpenAIEmbeddingBackend
@@ -38,7 +39,7 @@ def investigator(state: InvestigatorState):
 
     try:
         response = client.responses.parse(
-            model = "gpt-5-mini",
+            model = INVESTIGATOR_MODEL,
             input=prompt,
             text_format= InvestigatorHypothesis
         )

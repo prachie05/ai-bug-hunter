@@ -5,6 +5,7 @@ An agentic system that investigates real GitHub repositories, locates code relev
 The project is being built incrementally to explore **real agentic software-engineering pipelines** rather than wrapping a single LLM call around a codebase. Each stage is evaluated against real repositories, real code, and known bugs wherever possible.
 
 **Primary benchmark repository:** [`pallets/click`](https://github.com/pallets/click)
+
 **Cross-repository validation:** [`psf/requests`](https://github.com/psf/requests)
 
 ---
@@ -17,7 +18,7 @@ The project is being built incrementally to explore **real agentic software-engi
 * [x] **Day 4** — Swappable embeddings + FAISS retrieval + baseline evaluation
 * [x] **Day 5** — Embedding comparison + retrieval tuning + overload filtering
 * [x] **Day 6** — LangGraph investigator + hybrid retrieval + real-bug benchmarking + cross-repository validation
-* [ ] **Day 7** — FastAPI wrapper + cleanup
+* [x] **Day 7** — Repository caching + configuration + reusable pipeline + FastAPI service
 
 ---
 
@@ -51,57 +52,78 @@ Patch generation and validation are intentionally left for later stages rather t
 # Architecture
 
 ```text
-GitHub repository URL
-        |
-        v
+GitHub repository URL + bug report
+                |
+                v
 +---------------------------+
-| Repository Ingestion      |
-| clone / walk / filter     |
-| encoding + file checks    |
+| FastAPI Service            |
+| /investigate               |
 +---------------------------+
-        |
-        v
+                |
+                v
 +---------------------------+
-| AST Chunking               |
-| functions / methods /     |
-| classes / module code     |
+| Repository Cache           |
+| repo URL + revision       |
 +---------------------------+
-        |
-        v
+                |
+          cache hit?
+          /        \
+        yes         no
+         |           |
+         |           v
+         |    Repository Ingestion
+         |           |
+         |           v
+         |     AST Chunking
+         |           |
+         |           v
+         |     Embedding + FAISS
+         |           |
+         |           v
+         |       Save Cache
+         |           |
+         +-----+-----+
+               |
+               v
 +---------------------------+
-| Embedding + Indexing       |
-| OpenAI embeddings         |
-| FAISS semantic index     |
-| BM25 lexical index       |
+| BM25 Lexical Index        |
 +---------------------------+
-        |
-        v
+               |
+               v
 +---------------------------+
-| Hybrid Retrieval           |
-| Semantic search           |
-| BM25 search               |
-| Reciprocal Rank Fusion    |
+| Hybrid Retrieval          |
+| Semantic + BM25 + RRF     |
 +---------------------------+
-        |
-        v
+               |
+               v
 +---------------------------+
 | LangGraph Investigator    |
 | bug report + candidates   |
-|          |                |
-|          v                |
-| structured hypothesis     |
 +---------------------------+
-        |
-        v
-      Future
-        |
-        +--> Test Generator
-        +--> Patch Generator
-        +--> Validator
-        +--> Replanner
+               |
+               v
++---------------------------+
+| Structured Hypothesis     |
+| file / symbol / class     |
+| reasoning / confidence    |
++---------------------------+
+               |
+               v
+             Future
+               |
+       +-------+--------+
+       |                |
+       v                v
+ Test Generator   Patch Generator
+                        |
+                        v
+                 Sandbox Validator
+                        |
+                        v
+                    Replanner
 ```
 
-The current investigator is deliberately a **single LangGraph node**. The larger multi-agent graph will be introduced only after retrieval and localization are reliable enough to justify it.
+The current investigator is deliberately a **single LangGraph node**. The larger multi-stage graph will be introduced only after retrieval and localization are reliable enough to justify it.
 
 ---
 
@@ -213,8 +235,6 @@ This preserves:
 * decorators
 * whitespace
 * the author's original source representation
-
-This became important immediately.
 
 ### Decorator bug discovered
 
@@ -358,6 +378,7 @@ The chunker was updated to detect and filter overload stubs.
 
 ```text
 Click chunks:
+
 1,380 → 1,340
 ```
 
@@ -385,7 +406,7 @@ toward:
 
 ---
 
-## Investigator schema
+## Investigator Schema
 
 The investigator returns a structured hypothesis:
 
@@ -399,13 +420,7 @@ confidence
 
 `confidence` is explicitly defined as confidence in the **root-cause location**, rather than confidence that the code is merely related to the bug.
 
-`parent_class` was added because real repositories frequently contain repeated method names such as:
-
-```text
-invoke
-shell_complete
-send
-```
+`parent_class` was added because real repositories frequently contain repeated method names.
 
 A symbol name alone is therefore insufficient to uniquely identify a location.
 
@@ -442,10 +457,10 @@ Semantic search → top 20
 BM25 search     → top 20
                      |
                      v
-          Reciprocal Rank Fusion
+             Reciprocal Rank Fusion
                      |
                      v
-             requested top-k
+               requested top-k
 ```
 
 ## Why RRF?
@@ -495,7 +510,7 @@ would hide important information.
 
 ---
 
-## Failure categories
+## Failure Categories
 
 ### #2897 — Retrieval failure
 
@@ -562,7 +577,7 @@ This means the investigator cannot recover a missing implementation regardless o
 
 ### 2. Ground truth needs careful interpretation
 
-A historical patch location is not necessarily identical to the conceptual root cause.
+A historical patch location is useful ground truth, but it is not always identical to conceptual root cause.
 
 This matters particularly for constructor-heavy code where:
 
@@ -584,7 +599,7 @@ This terse, assignment-heavy implementation shares relatively little vocabulary 
 
 That vocabulary mismatch is a plausible explanation for the retrieval failures.
 
-### Next candidate experiment
+### Next Candidate Experiment
 
 Query rewriting / HyDE is a natural next experiment:
 
@@ -701,7 +716,182 @@ It should therefore be described as:
 
 rather than as proof of broad cross-repository generalization.
 
-The experiment provides evidence that the architecture is capable of transferring beyond the Click benchmark, but one repository is insufficient to establish general capability.
+---
+
+# Day 7 — Repository Caching + Service Layer
+
+Day 7 moved the project from a benchmark-oriented collection of scripts toward a reusable investigation service.
+
+The main goal was to make the investigation pipeline callable through an API while avoiding unnecessary repository processing and embedding costs.
+
+---
+
+## Repository + Revision Caching
+
+Repository processing can be expensive because it may require:
+
+```text
+clone
+    ↓
+ingestion
+    ↓
+AST chunking
+    ↓
+embedding
+    ↓
+FAISS indexing
+```
+
+A cache was introduced using:
+
+```text
+repo URL + revision
+```
+
+as the cache identity.
+
+The cache structure is:
+
+```text
+data/cache/
+    <repo-hash>/
+        embeddings.index
+        chunks.pkl
+```
+
+The investigator result itself is **not cached**, because different bug descriptions against the same repository should produce fresh hypotheses.
+
+BM25 is also rebuilt when loading a cached repository because it is inexpensive compared with embedding the entire repository again.
+
+### Cache behavior
+
+The implementation was tested for:
+
+```text
+Same repo + same revision
+        → cache hit
+
+Same repo + different revision
+        → cache miss
+
+Original revision again
+        → cache hit
+```
+
+This prevents repeated cloning, chunking, and full-repository embedding for the same repository revision.
+
+A future improvement will be resolving `HEAD` to its actual commit SHA before constructing the cache key so that a moving branch cannot map to stale cached content.
+
+---
+
+## Configuration
+
+Environment-based configuration was added using `.env` and `python-dotenv`.
+
+The following values can now be configured without changing source code:
+
+```text
+OPENAI_API_KEY
+EMBEDDING_MODEL
+INVESTIGATOR_MODEL
+```
+
+Stable application settings remain in `src/config.py`, including:
+
+```text
+EMBEDDING_DIMENSION
+RETRIEVAL_K
+CACHE_DIR
+```
+
+The `.env` file is excluded from version control.
+
+---
+
+## Reusable Investigation Pipeline
+
+The previous Requests experiment was extracted into a reusable:
+
+```text
+investigate_repo()
+```
+
+pipeline.
+
+The function now handles:
+
+```text
+repository
+    ↓
+cache lookup
+    ↓
+ingestion if required
+    ↓
+chunking
+    ↓
+embedding + FAISS
+    ↓
+BM25
+    ↓
+hybrid retrieval
+    ↓
+investigator
+    ↓
+structured hypothesis
+```
+
+Benchmark-specific retrieval printing and experiment scaffolding were separated from the core service path.
+
+---
+
+## FastAPI Service
+
+A FastAPI service was added with:
+
+```text
+POST /investigate
+```
+
+The endpoint accepts:
+
+```json
+{
+  "repo_url": "https://github.com/psf/requests.git",
+  "bug_description": "Response.history can contain a reference to the Response object itself after redirects.",
+  "k": 5,
+  "revision": "HEAD"
+}
+```
+
+The retrieval depth `k` and repository revision are configurable per request.
+
+The API returns:
+
+```json
+{
+  "evidence_chunks": [...],
+  "hypothesis": {
+    "file_path": "src/requests/sessions.py",
+    "symbol": "resolve_redirects",
+    "parent_class": "SessionRedirectMixin",
+    "reasoning": "...",
+    "confidence": 0.9
+  }
+}
+```
+
+The service therefore exposes the investigator as a reusable boundary:
+
+```text
+Repository URL
+Bug description
+      ↓
+POST /investigate
+      ↓
+Evidence + structured hypothesis
+```
+
+API failures are converted into HTTP error responses rather than leaking unhandled exceptions through the service boundary.
 
 ---
 
@@ -713,16 +903,14 @@ The investigator uses Pydantic structured output:
 InvestigatorHypothesis
 ```
 
-The LLM call is wrapped in exception handling so that malformed structured output, validation failures, API failures, or other exceptions do not crash the graph.
-
-Instead, the node returns an explicit error state:
+The underlying LangGraph investigator catches LLM/API/structured-output failures and records:
 
 ```text
 hypothesis = None
 error = <error message>
 ```
 
-This keeps failure inside the LangGraph state model and leaves room for future retry/replanning behavior.
+This keeps failures inside the graph state model and leaves room for future retry/replanning behavior.
 
 The current implementation intentionally does not implement retries yet.
 
@@ -746,7 +934,9 @@ Future evaluations should distinguish:
 
 ```text
 patch location
+
 implementation responsible for behavior
+
 conceptual root cause
 ```
 
@@ -763,6 +953,7 @@ The project has already encountered:
 * overload stubs
 * duplicate symbols
 * vocabulary mismatch
+* repository revision/caching concerns
 * patch-location vs root-cause ambiguity
 
 These emerged from working with actual repositories rather than only toy examples.
@@ -791,6 +982,12 @@ retrieve → investigate → generate test → patch → validate → replan
 
 This makes it possible to identify which component actually fails instead of hiding failures inside a large agent loop.
 
+## 6. Expensive computation should be cached
+
+Repository ingestion, chunking, and full-repository embedding are deterministic for a fixed repository revision.
+
+Caching these artifacts makes repeated investigations substantially cheaper while still allowing different bug reports to reuse the same repository representation.
+
 ---
 
 # Current Limitations
@@ -804,10 +1001,13 @@ The current system does **not yet**:
 * re-plan retrieval based on investigator uncertainty
 * perform query rewriting / HyDE
 * fully disambiguate duplicate symbols across classes
+* resolve moving `HEAD` references to immutable commit SHAs for caching
 * support all programming languages
 * establish broad cross-repository generalization
 
-The current investigator is also a single-node graph and uses a fixed Click index in the initial LangGraph experiment. The independent Requests validation was run through a dedicated experiment path rather than the final generalized API architecture.
+The current investigator is also a single-node graph.
+
+The initial Click evaluation used a dedicated benchmark path, while the Requests validation demonstrated that the underlying investigation architecture can operate on a second unfamiliar repository.
 
 These are intentional V1 boundaries rather than hidden gaps.
 
@@ -815,29 +1015,17 @@ These are intentional V1 boundaries rather than hidden gaps.
 
 # What's Next
 
-## Day 7 — FastAPI + cleanup
-
-Planned work:
-
-* expose repository investigation through FastAPI
-* accept repository URL + bug description
-* make repository/index handling configurable
-* clean up experiment-specific paths
-* separate reusable pipeline components from benchmark scripts
-* improve state/error handling
-* prepare the system for the next agentic stages
-
-Future stages will add:
+The next major development stage is the **full bug-fixing loop**:
 
 ```text
 Investigator
-     ↓
+      ↓
 Test Generator
-     ↓
+      ↓
 Patch Generator
-     ↓
+      ↓
 Sandbox Validator
-     ↓
+      ↓
 Replanner
 ```
 
@@ -848,6 +1036,18 @@ The goal is eventually to move from:
 to:
 
 > "I found the likely cause, wrote a regression test, generated a patch, ran it safely, and verified that the bug is fixed without breaking the repository."
+
+Future retrieval work may also investigate:
+
+```text
+Bug report
+    ↓
+Query rewriting / HyDE
+    ↓
+Retrieval
+```
+
+but this will be evaluated experimentally rather than assumed to improve performance.
 
 ---
 
@@ -883,6 +1083,18 @@ The originally planned self-repository dogfood test was intentionally substitute
 
 Added graceful structured-output failure handling so malformed or failed LLM responses are captured in `state.error` with `hypothesis=None` rather than crashing the graph.
 
+### Day 7
+
+Added repository/revision-based caching so repeated investigations of the same repository revision can reuse stored FAISS embeddings and chunks instead of recloning, rechunking, and re-embedding the repository.
+
+Added `.env`-based configuration for the OpenAI API key and model selection while keeping stable application settings in `src/config.py`.
+
+Extracted the investigation logic into a reusable `investigate_repo()` pipeline and separated it from benchmark-specific experiment code.
+
+Added a FastAPI `/investigate` endpoint with Pydantic request/response schemas, configurable retrieval depth, optional repository revision, and API-level error handling.
+
+Verified the service using the Requests #7328 bug. The API returned evidence chunks and a structured hypothesis identifying `SessionRedirectMixin.resolve_redirects` as the likely root-cause location with 0.9 confidence.
+
 ---
 
 # Current Takeaway
@@ -903,6 +1115,8 @@ The current evidence is mixed by design:
 * some benchmark disagreements are caused by ambiguity between historical patch location and conceptual root cause
 * the investigator can make useful distinctions between competing candidates when the relevant implementation is available
 * successful localization was verified on a second, unfamiliar repository
+* repository caching now avoids repeating expensive indexing work for the same revision
+* the investigation pipeline is exposed through a reusable FastAPI service
 
 The next major challenge is therefore not simply making the LLM "smarter."
 

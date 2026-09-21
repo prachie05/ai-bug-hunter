@@ -36,15 +36,15 @@ class VectorStore:
         return chunk_ans
 
     def save(self, path:str):
-        faiss.write_index(self.index,path)
+        faiss.write_index(self.index,str(path))
 
     def save_chunks(self,path:str):
-        file = self.save(path)
-        with open(path, "wb") as file:  # noqa: F811
+        
+        with open(path, "wb") as file:
             pickle.dump(self.chunks,file)
 
     def load(self, path: str):
-        self.index =faiss.read_index(path)
+        self.index =faiss.read_index(str(path))
 
     def load_chunks(self,path: str):
         with open(path, "rb") as file:

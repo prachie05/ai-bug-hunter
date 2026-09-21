@@ -1,28 +1,29 @@
 from git import Repo
 from openai import OpenAI
 
-from src.ingestion.repo_loader import ingest_repo
+from src.cache.cache_manager import CacheManager
 from src.chunker.chunking import chunk_file
-
+from src.config import (
+    EMBEDDING_DIMENSION,
+    EMBEDDING_MODEL,
+    RETRIEVAL_K,
+)
+from src.embeddings.bm25 import BM25Index
+from src.embeddings.embedding_text import build_embedding_text
+from src.embeddings.hybrid import hybrid_search
 from src.embeddings.openai_backend import OpenAIEmbeddingBackend
 from src.embeddings.vector_store import VectorStore
-from src.embeddings.bm25 import BM25Index
-from src.embeddings.hybrid import hybrid_search
-from src.embeddings.embedding_text import build_embedding_text
-
+from src.ingestion.repo_loader import ingest_repo
 from src.investigator.prompts import INVESTIGATOR_PROMPT
 from src.investigator.schemas import InvestigatorHypothesis
-
 
 REQUESTS_URL = "https://github.com/psf/requests.git"
 REQUESTS_REF = "185f587"
 
 DEST_DIR = "data/requests"
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIMENSION = 1536
 
-RETRIEVAL_K = 10
+cache = CacheManager()
 
 
 BUG_DESCRIPTION = """
@@ -32,88 +33,103 @@ logic and identify the most likely root-cause location responsible for
 adding responses to redirect history.
 """
 
+if cache.is_cached(REQUESTS_URL, REQUESTS_REF):
+    print("cache hit!")
 
-# ============================================================
-# 1. INGESTION
-# ============================================================
+    store = cache.load_repo_cache(REQUESTS_URL, REQUESTS_REF, EMBEDDING_DIMENSION)
 
-print("\n" + "=" * 70)
-print("1. INGESTION")
-print("=" * 70)
+    all_chunks = store.chunks
 
-source_files = ingest_repo(
-    REQUESTS_URL,
-    DEST_DIR,
-    REQUESTS_REF,
-)
+else:
+    print("cache miss")
 
-repo = Repo(DEST_DIR)
+    
+    # ============================================================
+    # 1. INGESTION
+    # ============================================================
 
-print("Commit:", repo.head.commit.hexsha)
-print("Python files:", len(source_files))
+    print("\n" + "=" * 70)
+    print("1. INGESTION")
+    print("=" * 70)
 
-
-# ============================================================
-# 2. CHUNKING
-# ============================================================
-
-print("\n" + "=" * 70)
-print("2. CHUNKING")
-print("=" * 70)
-
-all_chunks = []
-
-for source_file in source_files:
-
-    chunks = chunk_file(
-        source_file.content,
-        source_file.path,
-        source_file.is_generated,
+    source_files = ingest_repo(
+        REQUESTS_URL,
+        DEST_DIR,
+        REQUESTS_REF,
     )
 
-    all_chunks.extend(chunks)
+    repo = Repo(DEST_DIR)
 
-print("Chunks:", len(all_chunks))
-
-
-# ============================================================
-# 3. BUILD FAISS VECTOR STORE
-# ============================================================
-
-print("\n" + "=" * 70)
-print("3. VECTOR INDEX")
-print("=" * 70)
-
-backend = OpenAIEmbeddingBackend(
-    EMBEDDING_MODEL
-)
-
-store = VectorStore(
-    dimension=EMBEDDING_DIMENSION
-)
+    print("Commit:", repo.head.commit.hexsha)
+    print("Python files:", len(source_files))
 
 
-embedding_texts = [
-    build_embedding_text(chunk)
-    for chunk in all_chunks
-]
-
-print("Embedding chunks:", len(embedding_texts))
-
-embeddings, total_tokens = backend.embed_with_usage(
-    embedding_texts
-)
-
-print("Embedding tokens:", total_tokens)
-
-store.add(
-    embeddings,
-    all_chunks
-)
-
-print("FAISS vectors:", store.index.ntotal)
 
 
+
+    # ============================================================
+    # 2. CHUNKING
+    # ============================================================
+
+    print("\n" + "=" * 70)
+    print("2. CHUNKING")
+    print("=" * 70)
+
+    all_chunks = []
+
+    for source_file in source_files:
+
+        chunks = chunk_file(
+            source_file.content,
+            source_file.path,
+            source_file.is_generated,
+        )
+
+        all_chunks.extend(chunks)
+
+    print("Chunks:", len(all_chunks))
+
+
+    # ============================================================
+    # 3. BUILD FAISS VECTOR STORE
+    # ============================================================
+
+    print("\n" + "=" * 70)
+    print("3. VECTOR INDEX")
+    print("=" * 70)
+
+    backend = OpenAIEmbeddingBackend(
+        EMBEDDING_MODEL
+    )
+
+    store = VectorStore(
+        dimension=EMBEDDING_DIMENSION
+    )
+
+
+    embedding_texts = [
+        build_embedding_text(chunk)
+        for chunk in all_chunks
+    ]
+
+    print("Embedding chunks:", len(embedding_texts))
+
+    embeddings, total_tokens = backend.embed_with_usage(
+        embedding_texts
+    )
+
+    print("Embedding tokens:", total_tokens)
+
+    store.add(
+        embeddings,
+        all_chunks
+    )
+
+    print("FAISS vectors:", store.index.ntotal)
+
+    cache.save_repo_cache(REQUESTS_URL, REQUESTS_REF, store)
+
+backend = OpenAIEmbeddingBackend(EMBEDDING_MODEL)
 # ============================================================
 # 4. BUILD BM25
 # ============================================================
@@ -264,7 +280,7 @@ try:
     print("\nReasoning:")
     print(hypothesis.reasoning)
 
-except Exception as e:
+except Exception as e:  # noqa: BLE001
 
     print("\nINVESTIGATOR ERROR")
     print("------------------")
@@ -278,3 +294,4 @@ except Exception as e:
 print("\n" + "=" * 70)
 print("REQUESTS FULL PIPELINE COMPLETE")
 print("=" * 70)
+

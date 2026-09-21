@@ -1,12 +1,14 @@
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.config import EMBEDDING_MODEL
+
 from .base import EmbeddingBackend
 
 load_dotenv()
 
 class OpenAIEmbeddingBackend(EmbeddingBackend):
-    def __init__(self,model):
+    def __init__(self,model= EMBEDDING_MODEL):
         self.client = OpenAI()
         self.model = model
 
