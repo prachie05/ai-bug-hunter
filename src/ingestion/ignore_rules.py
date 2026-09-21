@@ -100,7 +100,7 @@ def is_binary_file(file_path: str) -> bool:
     if char_ratio > 0.3:
         return True
 
-    for file_type, signature in BINARY_SIGNATURES.items():
+    for file_type, signature in BINARY_SIGNATURES.items():  # noqa: PERF102
         if chunk.startswith(signature):
             return True
 

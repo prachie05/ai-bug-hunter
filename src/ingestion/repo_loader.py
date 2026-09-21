@@ -47,20 +47,40 @@ def read_file_with_encoding_fallback(file_path: str) -> str:
     return content
 
 
-def clone_repo(github_url: str, dest_dir: str) -> str:
+def clone_repo(
+    github_url: str,
+    dest_dir: str,
+    ref: str | None = None,
+) -> str:
     """
-    Clone a GitHub repo to dest_dir. If dest_dir already exists, wipes and
-    re-clones — keeps this idempotent so you can re-run freely during dev.
-    Returns the local path to the cloned repo.
+    Clone a GitHub repo to dest_dir.
+
+    If ref is None, performs a shallow clone of the current default branch.
+
+    If ref is provided, performs a full clone and checks out that specific
+    branch, tag, or commit.
     """
     if os.path.exists(dest_dir):
         logger.info("Removing existing clone at %s", dest_dir)
         shutil.rmtree(dest_dir)
 
     logger.info("Cloning %s -> %s", github_url, dest_dir)
-    Repo.clone_from(
-        github_url, dest_dir, depth=1
-    )  # shallow clone: don't need full history
+
+    if ref is None:
+        Repo.clone_from(
+            github_url,
+            dest_dir,
+            depth=1,
+        )
+    else:
+        repo = Repo.clone_from(
+            github_url,
+            dest_dir,
+        )
+
+        logger.info("Checking out revision %s", ref)
+        repo.git.checkout(ref)
+
     logger.info("Clone complete")
     return dest_dir
 
@@ -88,7 +108,10 @@ def walk_python_files(repo_path: str) -> list[str]:
     return sorted(python_files)
 
 
-def read_source_files(repo_path: str, relative_paths: list[str]) -> list[SourceFile]:
+def read_source_files(
+    repo_path: str,
+    relative_paths: list[str],
+) -> list[SourceFile]:
     """
     Read the content of each file. Day 1: naive read, assume UTF-8, skip
     a file with a warning if it fails to read rather than crashing the
@@ -102,17 +125,23 @@ def read_source_files(repo_path: str, relative_paths: list[str]) -> list[SourceF
 
         if file_size > MAX_FILE_SIZE:
             logger.warning(
-                "Skipping %s (file too large: %d bytes)", rel_path, file_size
+                "Skipping %s (file too large: %d bytes)",
+                rel_path,
+                file_size,
             )
             continue
 
         if is_binary_file(absolute_path):
-            logger.warning("Skipping %s as its a Binary File", rel_path)
+            logger.warning(
+                "Skipping %s as its a Binary File",
+                rel_path,
+            )
             continue
 
         try:
             content = read_file_with_encoding_fallback(absolute_path)
             is_generated = is_generated_file(content)
+
             source_files.append(
                 SourceFile(
                     path=rel_path,
@@ -121,15 +150,39 @@ def read_source_files(repo_path: str, relative_paths: list[str]) -> list[SourceF
                     is_generated=is_generated,
                 )
             )
-        except (UnicodeDecodeError, OSError) as e:
-            logger.warning("Skipping %s (%s)", rel_path, e)
 
-    logger.info("Successfully read %d/%d files", len(source_files), len(relative_paths))
+        except (UnicodeDecodeError, OSError) as e:
+            logger.warning(
+                "Skipping %s (%s)",
+                rel_path,
+                e,
+            )
+
+    logger.info(
+        "Successfully read %d/%d files",
+        len(source_files),
+        len(relative_paths),
+    )
+
     return source_files
 
 
-def ingest_repo(github_url: str, dest_dir: str) -> list[SourceFile]:
-    """End-to-end Day 1 pipeline: clone -> walk -> read."""
-    repo_path = clone_repo(github_url, dest_dir)
+def ingest_repo(
+    github_url: str,
+    dest_dir: str,
+    ref: str | None = None,
+) -> list[SourceFile]:
+    """End-to-end repository ingestion: clone -> walk -> read."""
+    repo_path = clone_repo(
+        github_url,
+        dest_dir,
+        ref,
+    )
+
     relative_paths = walk_python_files(repo_path)
-    return read_source_files(repo_path, relative_paths)
+
+    return read_source_files(
+        repo_path,
+        relative_paths,
+    )
+
