@@ -8,7 +8,7 @@ app = FastAPI()
 @app.post("/investigate", response_model=Response)
 def investigate(request: Request):
     try:
-        hypothesis, evidence_chunks = investigate_repo(
+        hypothesis, evidence_chunks,error = investigate_repo(
         request.repo_url,
         request.bug_description,
         request.k,
@@ -23,4 +23,5 @@ def investigate(request: Request):
     return Response(
         hypothesis= hypothesis,
         evidence_chunks=evidence_chunks,
+        error = error,
     )

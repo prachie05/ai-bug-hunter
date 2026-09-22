@@ -1,4 +1,3 @@
-from git import Repo
 from openai import OpenAI
 
 from src.cache.cache_manager import CacheManager
@@ -12,7 +11,6 @@ from src.embeddings.vector_store import VectorStore
 from src.ingestion.repo_loader import ingest_repo
 from src.investigator.prompts import INVESTIGATOR_PROMPT
 from src.investigator.schemas import InvestigatorHypothesis
-
 
 cache = CacheManager()
 DEST_DIR = "data/repo"
@@ -41,7 +39,7 @@ def investigate_repo(
             revision,
         )
 
-        repo = Repo(DEST_DIR)
+       
 
         all_chunks = []
 
@@ -99,12 +97,20 @@ def investigate_repo(
 
     client = OpenAI()
 
-    response = client.responses.parse(
-        model=INVESTIGATOR_MODEL,
-        input=prompt,
-        text_format=InvestigatorHypothesis,
-    )
+    try:
+        response = client.responses.parse(
+            model=INVESTIGATOR_MODEL,
+            input=prompt,
+            text_format=InvestigatorHypothesis,
+        )
 
-    hypothesis = response.output_parsed
+        hypothesis = response.output_parsed
+        error = None
 
-    return hypothesis, code_chunks
+        
+
+    except Exception as e:
+        hypothesis = None 
+        error =str(e)
+
+    return hypothesis, code_chunks, error

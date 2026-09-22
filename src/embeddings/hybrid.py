@@ -1,8 +1,8 @@
-from src.embeddings.retrieval import retrieve
+from src.config import RRF_K_CONSTANT
 
 
 #reciprocal rank fusion
-def rrf(semantic_results, bm25_results, k_constant=60):
+def rrf(semantic_results, bm25_results, k_constant=RRF_K_CONSTANT):
     scores = {}
     chunks = {}
 

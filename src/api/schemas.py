@@ -11,5 +11,6 @@ class Request(BaseModel):
     revision: str = "HEAD"
 
 class Response(BaseModel):
-    evidence_chunks: list[CodeChunk]
-    hypothesis: InvestigatorHypothesis
+    evidence_chunks: list[CodeChunk] 
+    hypothesis: InvestigatorHypothesis |None = None
+    error: str | None = None

@@ -9,10 +9,10 @@ Day 2 hardening has a clean, obvious place to slot in.
 
 import logging
 import os
-import shutil
 from dataclasses import dataclass
 
 from git import Repo
+from git.util import rmtree as git_rmtree
 
 from src.ingestion.ignore_rules import (
     MAX_FILE_SIZE,
@@ -62,7 +62,7 @@ def clone_repo(
     """
     if os.path.exists(dest_dir):
         logger.info("Removing existing clone at %s", dest_dir)
-        shutil.rmtree(dest_dir)
+        git_rmtree(dest_dir)
 
     logger.info("Cloning %s -> %s", github_url, dest_dir)
 
