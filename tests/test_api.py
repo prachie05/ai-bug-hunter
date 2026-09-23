@@ -3,7 +3,6 @@ from fastapi.testclient import TestClient
 from src.api.main import app
 from src.investigator.schemas import InvestigatorHypothesis
 
-
 client = TestClient(app)
 
 

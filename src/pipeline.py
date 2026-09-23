@@ -109,7 +109,7 @@ def investigate_repo(
 
         
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         hypothesis = None 
         error =str(e)
 

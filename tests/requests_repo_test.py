@@ -1,5 +1,5 @@
-from git import Repo
 import pytest
+from git import Repo
 
 from src.chunker.chunking import chunk_file
 from src.ingestion.repo_loader import ingest_repo
