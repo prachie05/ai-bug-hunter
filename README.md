@@ -1,6 +1,6 @@
 # AI Bug Hunter
 
-An agentic system that investigates real GitHub repositories, locates code relevant to a bug report, and eventually generates and validates a fix.
+An agentic system that investigates real GitHub repositories, locates code relevant to a bug report, and generates and validates a fix.
 
 The project is being built incrementally to explore **real agentic software-engineering pipelines** rather than wrapping a single LLM call around a codebase. Each stage is evaluated against real repositories, real code, and known bugs wherever possible.
 
@@ -10,7 +10,7 @@ The project is being built incrementally to explore **real agentic software-engi
 
 ---
 
-## Status
+# Status
 
 * [x] **Day 1** — Repository ingestion
 * [x] **Day 2** — Ingestion hardening
@@ -19,7 +19,9 @@ The project is being built incrementally to explore **real agentic software-engi
 * [x] **Day 5** — Embedding comparison + retrieval tuning + overload filtering
 * [x] **Day 6** — LangGraph investigator + hybrid retrieval + real-bug benchmarking + cross-repository validation
 * [x] **Day 7** — Repository caching + configuration + reusable pipeline + FastAPI service
-
+* [x] **Day 8** — Docker sandbox + disposable repository workspaces
+* [x] **Day 9** — Regression test generation + sandbox test execution
+* [x] **Day 10** — Patch generation + deterministic patch construction
 ---
 
 # Project Goal
@@ -43,9 +45,7 @@ and automatically:
 11. Validate the result.
 12. Re-plan if the patch fails.
 
-The current implementation reaches **step 6 — root-cause localization**.
-
-Patch generation and validation are intentionally left for later stages rather than being prematurely bolted onto an unreliable retrieval/investigation layer.
+The current implementation reaches **patch generation and safe patch application**. Validation and replanning are the next stages.
 
 ---
 
@@ -56,74 +56,103 @@ GitHub repository URL + bug report
                 |
                 v
 +---------------------------+
-| FastAPI Service            |
-| /investigate               |
+| FastAPI Service           |
+| /investigate              |
 +---------------------------+
                 |
                 v
 +---------------------------+
-| Repository Cache           |
+| Repository Cache          |
 | repo URL + revision       |
 +---------------------------+
                 |
           cache hit?
-          /        \
-        yes         no
-         |           |
-         |           v
-         |    Repository Ingestion
-         |           |
-         |           v
+          /       \
+        yes        no
+         |          |
+         |          v
+         |   Repository Ingestion
+         |          |
+         |          v
          |     AST Chunking
-         |           |
-         |           v
-         |     Embedding + FAISS
-         |           |
-         |           v
-         |       Save Cache
-         |           |
-         +-----+-----+
-               |
-               v
+         |          |
+         |          v
+         |    Embedding + FAISS
+         |          |
+         |          v
+         |      Save Cache
+         |          |
+         +----+-----+
+              |
+              v
 +---------------------------+
 | BM25 Lexical Index        |
 +---------------------------+
-               |
-               v
+              |
+              v
 +---------------------------+
 | Hybrid Retrieval          |
 | Semantic + BM25 + RRF     |
 +---------------------------+
-               |
-               v
+              |
+              v
 +---------------------------+
 | LangGraph Investigator    |
-| bug report + candidates   |
+| bug report + candidates    |
 +---------------------------+
-               |
-               v
+              |
+              v
 +---------------------------+
-| Structured Hypothesis     |
-| file / symbol / class     |
-| reasoning / confidence    |
+| Structured Hypothesis      |
+| file / symbol / class      |
+| reasoning / confidence     |
 +---------------------------+
-               |
-               v
-             Future
-               |
-       +-------+--------+
-       |                |
-       v                v
- Test Generator   Patch Generator
-                        |
-                        v
-                 Sandbox Validator
-                        |
-                        v
-                    Replanner
+              |
+              v
++---------------------------+
+| Test Generator            |
++---------------------------+
+              |
+              v
++---------------------------+
+| Docker Sandbox             |
+| Regression Test            |
++---------------------------+
+              |
+              v
++---------------------------+
+| Patch Generator            |
+| file / old_code / new_code |
++---------------------------+
+              |
+              v
++---------------------------+
+| Deterministic Patch Builder|
+| Python difflib             |
++---------------------------+
+              |
+              v
++---------------------------+
+| git apply --check          |
++---------------------------+
+              |
+              v
++---------------------------+
+| git apply                  |
++---------------------------+
+              |
+              v
++---------------------------+
+| Test Validator             |
++---------------------------+
+              |
+              v
++---------------------------+
+| Replanner                  |
++---------------------------+
 ```
 
-The current investigator is deliberately a **single LangGraph node**. The larger multi-stage graph will be introduced only after retrieval and localization are reliable enough to justify it.
+The investigation stage originally began as a single LangGraph node. The larger multi-stage graph is being introduced incrementally as each component becomes reliable enough to justify the next stage.
 
 ---
 
@@ -159,7 +188,7 @@ A deterministic **poison-repository test fixture** was created containing:
 * empty files
 * files with misleading extensions
 
-### Binary detection
+## Binary detection
 
 Binary detection uses multiple signals rather than relying on a single heuristic:
 
@@ -170,13 +199,13 @@ Binary detection uses multiple signals rather than relying on a single heuristic
 
 This caught cases such as a fake PNG signature that a simple text heuristic could otherwise mishandle.
 
-### Encoding fallback
+## Encoding fallback
 
 Source files are first decoded as UTF-8.
 
 If that fails, the ingestion layer falls back to CP1252 rather than immediately discarding the file.
 
-### Generated files
+## Generated files
 
 Generated files are **not automatically discarded**.
 
@@ -236,7 +265,7 @@ This preserves:
 * whitespace
 * the author's original source representation
 
-### Decorator bug discovered
+## Decorator bug discovered
 
 `ast.FunctionDef.lineno` points to the function definition rather than the first decorator.
 
@@ -252,7 +281,7 @@ helper was introduced so functions and classes include their decorators when app
 
 A single `build_chunk()` helper then centralizes source slicing.
 
-### Class chunking
+## Class chunking
 
 Classes are not mechanically treated as one giant chunk.
 
@@ -263,7 +292,7 @@ The current strategy is:
 
 This provides more useful retrieval granularity while avoiding unnecessary fragmentation.
 
-### Deliberate V1 simplifications
+## Deliberate V1 simplifications
 
 Nested functions remain inside their enclosing function's chunk.
 
@@ -346,7 +375,7 @@ Two OpenAI embedding models were evaluated using the same repository, chunks, an
 | Full embedding pass |                ~$0.00495 |                ~$0.03219 |
 | Relative cost       |                       1× |                    ~6.5× |
 
-### Retrieval accuracy
+## Retrieval accuracy
 
 | Model                    | k=1 | k=3 | k=5 |  k=10 |
 | ------------------------ | --: | --: | --: | ----: |
@@ -404,8 +433,6 @@ toward:
 
 > "Given these candidates, where is the most likely root cause?"
 
----
-
 ## Investigator Schema
 
 The investigator returns a structured hypothesis:
@@ -455,11 +482,15 @@ The pipeline now retrieves:
 ```text
 Semantic search → top 20
 BM25 search     → top 20
-                     |
-                     v
+
+                    |
+                    v
+
              Reciprocal Rank Fusion
-                     |
-                     v
+
+                    |
+                    v
+
                requested top-k
 ```
 
@@ -510,9 +541,9 @@ would hide important information.
 
 ---
 
-## Failure Categories
+# Failure Categories
 
-### #2897 — Retrieval failure
+## #2897 — Retrieval failure
 
 The recorded implementation never entered the candidate set.
 
@@ -520,7 +551,7 @@ The investigator therefore selected a related property with plausible reasoning,
 
 This is primarily a **retrieval failure**.
 
-### #2906 — Unexamined candidate
+## #2906 — Unexamined candidate
 
 A better-aligned `_resolve_*` candidate was present in the retrieved set, but the investigator did not engage with or rule out that candidate.
 
@@ -530,7 +561,7 @@ This is different from a confirmed reasoning failure because the unexamined cand
 
 However, it is also different from a clean retrieval failure because more relevant code **was available**.
 
-### #3084 — Benchmark ambiguity
+## #3084 — Benchmark ambiguity
 
 The recorded ground truth is where the historical patch landed:
 
@@ -557,7 +588,7 @@ This is an important distinction:
 
 The benchmark is measuring **patch location agreement**, while the investigator is attempting **conceptual root-cause localization**.
 
-### #2952 — Benchmark ambiguity
+## #2952 — Benchmark ambiguity
 
 Similarly, the recorded patch location was `Option.__init__`, while the investigator selected another implementation involved in environment-variable/value handling.
 
@@ -569,13 +600,13 @@ This requires further source-level investigation before classifying the predicti
 
 The Click benchmark revealed two important bottlenecks.
 
-### 1. Retrieval remains the main limitation
+## 1. Retrieval remains the main limitation
 
 The recorded ground-truth chunks were absent from the candidate set in all four cases.
 
 This means the investigator cannot recover a missing implementation regardless of how good its reasoning is.
 
-### 2. Ground truth needs careful interpretation
+## 2. Ground truth needs careful interpretation
 
 A historical patch location is useful ground truth, but it is not always identical to conceptual root cause.
 
@@ -599,7 +630,7 @@ This terse, assignment-heavy implementation shares relatively little vocabulary 
 
 That vocabulary mismatch is a plausible explanation for the retrieval failures.
 
-### Next Candidate Experiment
+## Next Candidate Experiment
 
 Query rewriting / HyDE is a natural next experiment:
 
@@ -631,13 +662,13 @@ This was an intentional substitution because a second, unfamiliar repository pro
 
 The repository was checked out at the pre-fix revision.
 
-### Bug
+## Bug
 
 Requests issue #7328 involved `Response.history` incorrectly containing a reference to the response itself, creating the possibility of looping when traversing redirect history.
 
-### Experiment
+## Investigation
 
-The full pipeline was executed:
+The full investigation pipeline was executed:
 
 ```text
 Requests repository
@@ -665,7 +696,7 @@ SessionRedirectMixin.resolve_redirects
 
 was ranked **#5** by semantic retrieval.
 
-The top four results were tests describing the expected behavior rather than the implementation itself.
+The top four results were tests describing expected behavior rather than the implementation itself.
 
 ### Hybrid retrieval
 
@@ -685,6 +716,7 @@ The investigator selected:
 
 ```text
 src/requests/sessions.py
+
 SessionRedirectMixin.resolve_redirects
 ```
 
@@ -706,15 +738,7 @@ Therefore this experiment is classified as a:
 
 **verified root-cause localization success.**
 
-This is stronger evidence than simply finding a plausible-looking method.
-
-However, this remains **one independent repository example**.
-
-It should therefore be described as:
-
-> **Successful transfer to a second repository**
-
-rather than as proof of broad cross-repository generalization.
+This remains **one independent repository example** and should therefore be described as successful transfer to a second repository rather than proof of broad cross-repository generalization.
 
 ---
 
@@ -724,21 +748,19 @@ Day 7 moved the project from a benchmark-oriented collection of scripts toward a
 
 The main goal was to make the investigation pipeline callable through an API while avoiding unnecessary repository processing and embedding costs.
 
----
-
 ## Repository + Revision Caching
 
 Repository processing can be expensive because it may require:
 
 ```text
 clone
-    ↓
+  ↓
 ingestion
-    ↓
+  ↓
 AST chunking
-    ↓
+  ↓
 embedding
-    ↓
+  ↓
 FAISS indexing
 ```
 
@@ -754,8 +776,11 @@ The cache structure is:
 
 ```text
 data/cache/
+
     <repo-hash>/
+
         embeddings.index
+
         chunks.pkl
 ```
 
@@ -784,7 +809,7 @@ A future improvement will be resolving `HEAD` to its actual commit SHA before co
 
 ---
 
-## Configuration
+# Configuration
 
 Environment-based configuration was added using `.env` and `python-dotenv`.
 
@@ -808,7 +833,7 @@ The `.env` file is excluded from version control.
 
 ---
 
-## Reusable Investigation Pipeline
+# Reusable Investigation Pipeline
 
 The previous Requests experiment was extracted into a reusable:
 
@@ -844,7 +869,7 @@ Benchmark-specific retrieval printing and experiment scaffolding were separated 
 
 ---
 
-## FastAPI Service
+# FastAPI Service
 
 A FastAPI service was added with:
 
@@ -885,13 +910,312 @@ The service therefore exposes the investigator as a reusable boundary:
 ```text
 Repository URL
 Bug description
+
       ↓
+
 POST /investigate
+
       ↓
+
 Evidence + structured hypothesis
 ```
 
 API failures are converted into HTTP error responses rather than leaking unhandled exceptions through the service boundary.
+
+---
+
+# Day 8 — Docker Sandbox + Disposable Workspaces
+
+Day 8 introduced isolated execution for generated code.
+
+The sandbox uses Docker to execute generated tests against repository copies rather than the original working repository.
+
+The sandbox enforces:
+
+* isolated container execution
+* disabled network access
+* memory limits
+* CPU limits
+* execution timeout
+* automatic container cleanup
+
+The repository is mounted into the container as:
+
+```text
+/repo
+```
+
+and tests are executed using `pytest`.
+
+## Disposable repository copies
+
+A disposable workspace helper was introduced:
+
+```text
+src/sandbox/workspace.py
+```
+
+The helper:
+
+1. creates a temporary directory
+2. copies the repository into it
+3. excludes `.git`
+4. yields the temporary repository path
+5. deletes the workspace afterward
+
+This establishes an important safety boundary:
+
+```text
+Original repository
+        |
+        | never directly modified
+        v
+Disposable repository copy
+        |
+        v
+Docker sandbox
+```
+
+The eventual full pipeline will reuse one disposable workspace across test generation, test execution, patch application, and post-patch validation.
+
+---
+
+# Day 9 — Regression Test Generator
+
+Day 9 introduced an LLM-based regression test generator.
+
+The generator receives:
+
+```text
+bug description
+investigator hypothesis
+retrieved implementation chunks
+```
+
+and returns a structured:
+
+```text
+GeneratedTest
+    |
+    +-- test_code
+    +-- description
+```
+
+The generated test is then written into a disposable repository copy and executed inside the Docker sandbox.
+
+## Sandbox result classification
+
+The sandbox returns structured execution information including:
+
+```text
+passed
+exit_code
+output
+ran_successfully
+assertion_failed
+timed_out
+```
+
+This distinguishes basic failure classes such as:
+
+```text
+test passed
+test assertion failed
+test execution failed
+test timed out
+```
+
+The current assertion classification is intentionally simple and is a V1 implementation rather than a complete pytest error parser.
+
+## Important lesson
+
+Testing the generator against real bugs exposed a critical failure mode:
+
+> An LLM can invent behavior or construct an artificial reproduction that does not actually correspond to the historical bug.
+
+For example, an early Click regression test passed on both buggy and fixed versions, meaning it was not a valid regression test.
+
+This established an important rule for the later pipeline:
+
+**A generated test is evidence, not ground truth.**
+
+A test must fail on the buggy revision and pass on the fixed revision before it can be treated as a meaningful regression test.
+
+Day 9 therefore established the test-generation and execution infrastructure without claiming that generated tests are automatically correct.
+
+---
+
+# Day 10 — Patch Generator + Deterministic Patch Construction
+
+Day 10 introduced automated patch generation and safe patch application.
+
+The initial design asked the LLM to directly produce a Git unified diff.
+
+That approach exposed a specific reliability problem:
+
+> The model could identify the correct implementation change but produce malformed unified-diff hunk arithmetic.
+
+For example, the model could generate an incorrect:
+
+```text
+@@ -X,Y +A,B @@
+```
+
+header even when the actual code change was correct.
+
+Instead of adding increasingly complicated prompt instructions for arithmetic, the architecture was changed to **remove diff construction from the LLM's responsibilities entirely**.
+
+## New Patch Generator Contract
+
+The LLM now returns a structured implementation change:
+
+```text
+GeneratedPatch
+
+file_path
+old_code
+new_code
+description
+```
+
+The model is responsible for answering:
+
+> **What code should change?**
+
+It is no longer responsible for answering:
+
+> **How do I encode that change as a valid Git diff?**
+
+### Deterministic Patch Builder
+
+A new:
+
+```text
+src/patch_generator/patch_builder.py
+```
+
+was introduced.
+
+The patch builder:
+
+1. resolves the repository-relative file path
+2. verifies that the file exists
+3. reads the actual repository source
+4. checks that `old_code` occurs exactly once
+5. replaces `old_code` with `new_code`
+6. uses Python's `difflib.unified_diff()` to compare the original and modified content
+7. generates the unified diff deterministically
+
+The resulting diff is then passed to the existing patch applier.
+
+### Architecture
+
+```text
+LLM Patch Generator
+        |
+        | file_path
+        | old_code
+        | new_code
+        | description
+        v
+Deterministic Patch Builder
+        |
+        | difflib.unified_diff()
+        v
+Git Unified Diff
+        |
+        v
+git apply --check
+        |
+        v
+git apply
+```
+
+### Why this architecture?
+
+This separates **reasoning from deterministic formatting**.
+
+The LLM handles the part that requires semantic understanding:
+
+```text
+"What implementation change fixes this bug?"
+```
+
+Python handles the part that should not depend on probabilistic generation:
+
+```text
+"Where are the changed lines?"
+"How many lines are in the hunk?"
+"What is the correct diff syntax?"
+```
+
+This eliminates the class of failures caused by LLM-generated hunk arithmetic.
+
+### Exact source matching
+
+The patch builder requires:
+
+```text
+old_code.count(...) == 1
+```
+
+If the old code appears zero times or multiple times, the builder fails loudly rather than guessing.
+
+This prevents:
+
+* silent partial matches
+* accidental replacement of the wrong occurrence
+* whitespace mismatch being ignored
+* ambiguous replacement locations
+
+### Git safety
+
+Before mutation, the generated diff is passed through:
+
+```text
+git apply --check
+```
+
+Only a mechanically valid patch is then applied using:
+
+```text
+git apply
+```
+
+This gives the patch pipeline a deterministic validation boundary before modifying the disposable repository.
+
+### Requests validation
+
+The architecture was validated against the Requests redirect-history bug.
+
+The LLM produced:
+
+```text
+file_path:
+src/requests/sessions.py
+
+old_code:
+hist.append(resp)
+resp.history = hist[1:]
+
+new_code:
+resp.history = hist[:]
+hist.append(resp)
+```
+
+The deterministic builder converted this structured change into a valid unified diff, which was accepted by `git apply`.
+
+The generated implementation change also matched the historical fix.
+
+This demonstrates successful **patch-generation mechanics**, but does not yet prove that the generated regression test and patch actually fix the bug.
+
+That verification belongs to Day 11.
+
+## V1 Patch Scope
+
+The current Patch Generator supports **one implementation-file change per generated patch**.
+
+Multi-file patches are intentionally deferred until a concrete bug requires them.
 
 ---
 
@@ -907,6 +1231,7 @@ The underlying LangGraph investigator catches LLM/API/structured-output failures
 
 ```text
 hypothesis = None
+
 error = <error message>
 ```
 
@@ -955,6 +1280,8 @@ The project has already encountered:
 * vocabulary mismatch
 * repository revision/caching concerns
 * patch-location vs root-cause ambiguity
+* LLM-generated regression tests that encode unsupported behavior
+* LLM-generated patch hunk arithmetic failures
 
 These emerged from working with actual repositories rather than only toy examples.
 
@@ -988,24 +1315,45 @@ Repository ingestion, chunking, and full-repository embedding are deterministic 
 
 Caching these artifacts makes repeated investigations substantially cheaper while still allowing different bug reports to reuse the same repository representation.
 
+## 7. LLMs should not own deterministic transformations
+
+Day 10 demonstrated a broader engineering principle:
+
+> If a task is deterministic and mechanically verifiable, it should be handled by deterministic software rather than delegated to an LLM.
+
+The LLM is useful for determining:
+
+```text
+old_code → new_code
+```
+
+Python is better suited to determining:
+
+```text
+old file + new file → valid unified diff
+```
+
+This reduces the LLM's failure surface without reducing its role in semantic reasoning.
+
 ---
 
 # Current Limitations
 
 The current system does **not yet**:
 
-* generate patches
-* generate regression tests automatically
-* execute patches in a sandbox
-* validate generated fixes
-* re-plan retrieval based on investigator uncertainty
+* reliably generate valid regression tests for arbitrary bugs
+* prove generated tests reproduce the historical bug automatically
+* validate generated patches against the full repository test suite
+* re-plan retrieval based on validator failures
 * perform query rewriting / HyDE
 * fully disambiguate duplicate symbols across classes
 * resolve moving `HEAD` references to immutable commit SHAs for caching
+* support multi-file patches
 * support all programming languages
 * establish broad cross-repository generalization
+* provide complete pytest failure classification
 
-The current investigator is also a single-node graph.
+The current Patch Generator is also intentionally limited to **one implementation-file change per patch**.
 
 The initial Click evaluation used a dedicated benchmark path, while the Requests validation demonstrated that the underlying investigation architecture can operate on a second unfamiliar repository.
 
@@ -1015,27 +1363,43 @@ These are intentional V1 boundaries rather than hidden gaps.
 
 # What's Next
 
-The next major development stage is the **full bug-fixing loop**:
+The next stage is the **Test Validator**.
 
 ```text
-Investigator
-      ↓
-Test Generator
-      ↓
-Patch Generator
-      ↓
-Sandbox Validator
-      ↓
-Replanner
+Generated regression test
+        ↓
+Run against buggy revision
+        ↓
+Expected: FAIL
+        ↓
+Apply generated patch
+        ↓
+Run regression test
+        ↓
+Expected: PASS
+        ↓
+Run existing test suite
+        ↓
+Expected: no new failures
 ```
 
-The goal is eventually to move from:
+The validator will establish whether the patch actually fixes the reported bug rather than merely being syntactically applicable.
 
-> "I think the bug is here."
+After that:
 
-to:
-
-> "I found the likely cause, wrote a regression test, generated a patch, ran it safely, and verified that the bug is fixed without breaking the repository."
+```text
+Day 11
+Test Validator
+        ↓
+Day 12
+Full linear pipeline
+        ↓
+Day 13–14
+Integration hardening + logging + traces
+        ↓
+Future
+Replanning
+```
 
 Future retrieval work may also investigate:
 
@@ -1095,6 +1459,50 @@ Added a FastAPI `/investigate` endpoint with Pydantic request/response schemas, 
 
 Verified the service using the Requests #7328 bug. The API returned evidence chunks and a structured hypothesis identifying `SessionRedirectMixin.resolve_redirects` as the likely root-cause location with 0.9 confidence.
 
+### Day 8
+
+Introduced Docker-based sandbox execution for generated tests.
+
+Added disposable repository copies so generated code is executed against isolated repository workspaces rather than the original repository.
+
+Added sandbox resource controls including network isolation, memory limits, CPU limits, execution timeouts, and automatic container cleanup.
+
+### Day 9
+
+Built the LLM Test Generator with structured `GeneratedTest` output.
+
+Connected generated tests to the Docker sandbox and added structured execution results for pass/fail, assertion failure, execution failure, and timeout cases.
+
+Real-bug experimentation exposed that generated tests can invent unsupported behavior or construct unrealistic reproductions. This established the rule that generated tests are evidence rather than ground truth.
+
+### Day 10
+
+Built the Patch Generator and initially tested direct LLM-generated unified diffs.
+
+The LLM successfully identified implementation changes but produced unreliable unified-diff hunk arithmetic.
+
+Instead of continuing to prompt the model around arithmetic, the architecture was redesigned:
+
+```text
+LLM
+ ↓
+file_path + old_code + new_code
+ ↓
+Python patch builder
+ ↓
+difflib.unified_diff()
+ ↓
+git apply --check
+ ↓
+git apply
+```
+
+The deterministic builder now verifies that `old_code` occurs exactly once in the actual repository before constructing the patch.
+
+Validated the architecture against Requests #7328. The LLM produced the correct historical implementation change, the Python builder generated a valid unified diff, and Git accepted the patch.
+
+This establishes patch-generation **mechanics**, while actual bug-fix validation is intentionally deferred to Day 11.
+
 ---
 
 # Current Takeaway
@@ -1103,9 +1511,9 @@ The project has now moved beyond:
 
 > **"Can embeddings find relevant code?"**
 
-to testing a more realistic question:
+to:
 
-> **"Can an agent investigate a real bug report using retrieved code and identify the implementation responsible for the behavior?"**
+> **"Can an agent investigate a real bug report, identify the implementation responsible for the behavior, generate a regression test, and propose a mechanically valid implementation change?"**
 
 The current evidence is mixed by design:
 
@@ -1117,6 +1525,9 @@ The current evidence is mixed by design:
 * successful localization was verified on a second, unfamiliar repository
 * repository caching now avoids repeating expensive indexing work for the same revision
 * the investigation pipeline is exposed through a reusable FastAPI service
+* generated tests can be unreliable and therefore cannot automatically be treated as ground truth
+* patch generation benefits from separating LLM reasoning from deterministic patch construction
+* `difflib` now handles unified-diff construction instead of relying on LLM-generated hunk arithmetic
 
 The next major challenge is therefore not simply making the LLM "smarter."
 

@@ -1,12 +1,12 @@
-from git import Repo
+from git import Repo # type: ignore
 from openai import OpenAI
-
 from src.cache.cache_manager import CacheManager
 from src.chunker.chunking import chunk_file
 from src.config import (
     EMBEDDING_DIMENSION,
     EMBEDDING_MODEL,
     RETRIEVAL_K,
+    INVESTIGATOR_MODEL
 )
 from src.embeddings.bm25 import BM25Index
 from src.embeddings.embedding_text import build_embedding_text
@@ -16,21 +16,26 @@ from src.embeddings.vector_store import VectorStore
 from src.ingestion.repo_loader import ingest_repo
 from src.investigator.prompts import INVESTIGATOR_PROMPT
 from src.investigator.schemas import InvestigatorHypothesis
+from src.investigator.state import InvestigatorState
+from src.test_generator.generator import generator_test
+from src.test_generator.test_runner import run_generated_test
+
+from src.patch_generator.patch_pipeline import generate_and_apply_patch
+from src.patch_generator.patch_generator import patch_generator
 
 REQUESTS_URL = "https://github.com/psf/requests.git"
-REQUESTS_REF = "185f587"
+REQUESTS_REF = "v2.33.1"
 
 DEST_DIR = "data/requests"
 
 
 cache = CacheManager()
 
-
 BUG_DESCRIPTION = """
-In Requests, Response.history can incorrectly contain a reference to the
-Response object itself after redirects. Investigate the redirect handling
-logic and identify the most likely root-cause location responsible for
-adding responses to redirect history.
+When following HTTP redirects, Response.history can contain a reference
+to the response itself. This creates a self-referential history structure
+and can cause code traversing the redirect history to loop indefinitely.
+The bug was fixed in Requests 2.34.0.
 """
 
 if cache.is_cached(REQUESTS_URL, REQUESTS_REF):
@@ -262,29 +267,40 @@ client = OpenAI()
 try:
 
     response = client.responses.parse(
-        model="gpt-5-mini",
+        model= INVESTIGATOR_MODEL,
         input=prompt,
         text_format=InvestigatorHypothesis,
     )
 
     hypothesis = response.output_parsed
 
-    print("\nPREDICTED ROOT CAUSE")
-    print("--------------------")
+    state = InvestigatorState(
+        bug_description= BUG_DESCRIPTION,
+        retrieved_chunks= code_chunks,
+        hypothesis= hypothesis,
+        retrieval_k=RETRIEVAL_K,
+    )
 
-    print("File:", hypothesis.file_path)
-    print("Symbol:", hypothesis.symbol)
-    print("Parent:", hypothesis.parent_class)
-    print("Confidence:", hypothesis.confidence)
+    generated = generator_test(state)
 
-    print("\nReasoning:")
-    print(hypothesis.reasoning)
+    state.generated_test = generated["generated_test"]
+
+    sandbox_result = run_generated_test(
+        DEST_DIR,
+        generated["generated_test"]
+    )
+
+    patch_result = generate_and_apply_patch(state,DEST_DIR)
+    
+
+    print("\nPATCH RESULT")
+    print("------------------")
+    print(patch_result)
 
 except Exception as e:  # noqa: BLE001
-
-    print("\nINVESTIGATOR ERROR")
-    print("------------------")
-    print(str(e))
+        print("\nINVESTIGATOR ERROR")
+        print("------------------")
+        print(str(e))
 
 
 # ============================================================

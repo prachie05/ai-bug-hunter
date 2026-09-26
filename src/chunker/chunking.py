@@ -150,7 +150,9 @@ class ChunkVisitor(ast.NodeVisitor):
 
 
 def chunk_file(source,filepath,is_generated):
-    tree = ast.parse(source)
+    tree = ast.parse(source)\
+
+    filepath = filepath.replace("\\", "/")
 
     visitor = ChunkVisitor(source,filepath,is_generated)
 
