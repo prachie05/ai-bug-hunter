@@ -1,5 +1,6 @@
-import os 
 import difflib
+import os
+
 
 def build_patch(repo_path, file_path, old_code, new_code):
     full_path = os.path.join(repo_path, file_path)

@@ -1,4 +1,6 @@
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 
 import docker
@@ -20,14 +22,15 @@ class SandboxResult:
     passed: bool
     exit_code: int
     output: str
+    junit_xml: str
     ran_successfully: bool
     assertion_failed: bool
     timed_out: bool = False
 
 
-def run_test(
+def run_pytest(
     repo_path: str,
-    test_path: str,
+    pytest_target: str,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     mem_limit: str = DEFAULT_MEM_LIMIT,
     cpu_quota: float = DEFAULT_CPU_QUOTA,
@@ -37,14 +40,16 @@ def run_test(
     Docker container, mounting repo_path read-only at /repo.
     """
     client = docker.from_env()
-
+    results_dir = tempfile.mkdtemp()
     try:
         container = client.containers.create(
             IMAGE_NAME,
-            ["pytest", test_path],
-            volumes={os.path.abspath(repo_path): {"bind": "/repo", "mode": "ro"}},
+            ["pytest", "-q", pytest_target, "--junit-xml=/results/pytest.xml"],
+            volumes={os.path.abspath(repo_path): {"bind": "/repo", "mode": "ro"},
+            results_dir: {"bind": "/results","mode": "rw"}
+},
             working_dir="/repo",
-            network_disabled=True,
+            network_disabled=False,
             mem_limit=mem_limit,
             nano_cpus=int(cpu_quota * 1_000_000_000),
         )
@@ -59,6 +64,15 @@ def run_test(
 
         try:
             result = container.wait(timeout=timeout_seconds)
+
+            xml_path = os.path.join(results_dir, "pytest.xml")
+
+            with open(xml_path,  encoding="utf-8") as file:
+                junit_xml = file.read()
+
+            
+
+            
             exit_code = result["StatusCode"]
             output = container.logs().decode()
             timed_out = False
@@ -73,11 +87,13 @@ def run_test(
 
     finally:
         container.remove(force=True)
+        shutil.rmtree(results_dir, ignore_errors=True)
 
     return SandboxResult(
         passed=exit_code == PYTEST_PASSED,
         exit_code=exit_code,
         output=output,
+        junit_xml=junit_xml,
         ran_successfully=exit_code in (PYTEST_PASSED, PYTEST_TEST_FAILURES),
         assertion_failed=assertion_failed,
         timed_out=timed_out,

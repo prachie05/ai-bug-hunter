@@ -1,12 +1,18 @@
-from src.patch_generator.patch_generator import patch_generator
 from src.patch_generator.patch_applier import apply_patch
-from src.patch_generator.patch_builder import build_patch   
+from src.patch_generator.patch_builder import build_patch
+from src.patch_generator.patch_generator import patch_generator
 
 
-def generate_and_apply_patch(state, repo_path):
+def generate_and_apply_patch(state, repo_path): 
     result = patch_generator(state)
 
     generated_patch = result["generated_patch"]
+
+    print("\nOLD CODE")
+    print(generated_patch.old_code)
+
+    print("\nNEW CODE")
+    print(generated_patch.new_code)
 
     patch = build_patch(
         repo_path,

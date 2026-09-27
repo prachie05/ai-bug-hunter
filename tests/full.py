@@ -1,12 +1,15 @@
-from git import Repo # type: ignore
+from pathlib import Path
+
+from git import Repo  # type: ignore
 from openai import OpenAI
+
 from src.cache.cache_manager import CacheManager
 from src.chunker.chunking import chunk_file
 from src.config import (
     EMBEDDING_DIMENSION,
     EMBEDDING_MODEL,
+    INVESTIGATOR_MODEL,
     RETRIEVAL_K,
-    INVESTIGATOR_MODEL
 )
 from src.embeddings.bm25 import BM25Index
 from src.embeddings.embedding_text import build_embedding_text
@@ -17,14 +20,14 @@ from src.ingestion.repo_loader import ingest_repo
 from src.investigator.prompts import INVESTIGATOR_PROMPT
 from src.investigator.schemas import InvestigatorHypothesis
 from src.investigator.state import InvestigatorState
+from src.patch_generator.patch_generator import patch_generator  # noqa: F401
+from src.patch_generator.patch_pipeline import generate_and_apply_patch
 from src.test_generator.generator import generator_test
 from src.test_generator.test_runner import run_generated_test
-
-from src.patch_generator.patch_pipeline import generate_and_apply_patch
-from src.patch_generator.patch_generator import patch_generator
+from src.validator.validator import validate
 
 REQUESTS_URL = "https://github.com/psf/requests.git"
-REQUESTS_REF = "v2.33.1"
+REQUESTS_REF = "cbce031327be4f1b4b5fd041ff4dcaa8efa2ce53"
 
 DEST_DIR = "data/requests"
 
@@ -32,7 +35,7 @@ DEST_DIR = "data/requests"
 cache = CacheManager()
 
 BUG_DESCRIPTION = """
-When following HTTP redirects, Response.history can contain a reference
+When following HTTP redirects, Respose.history can contain a reference
 to the response itself. This creates a self-referential history structure
 and can cause code traversing the redirect history to loop indefinitely.
 The bug was fixed in Requests 2.34.0.
@@ -41,9 +44,20 @@ The bug was fixed in Requests 2.34.0.
 if cache.is_cached(REQUESTS_URL, REQUESTS_REF):
     print("cache hit!")
 
-    store = cache.load_repo_cache(REQUESTS_URL, REQUESTS_REF, EMBEDDING_DIMENSION)
+    store = cache.load_repo_cache(
+        REQUESTS_URL,
+        REQUESTS_REF,
+        EMBEDDING_DIMENSION,
+    )
 
     all_chunks = store.chunks
+
+    if not Path(DEST_DIR).exists():
+        ingest_repo(
+            REQUESTS_URL,
+            DEST_DIR,
+            REQUESTS_REF,
+        )
 
 else:
     print("cache miss")
@@ -291,16 +305,38 @@ try:
     )
 
     patch_result = generate_and_apply_patch(state,DEST_DIR)
-    
 
+    print("\n>>> STARTING VALIDATOR")
+
+    validation = validate(
+        DEST_DIR,
+        "tests/generated_test.py",
+        "tests",
+    )
+
+    print("\n>>> VALIDATOR RETURNED")
+
+    print("\nVALIDATION RESULT")
+    print("------------------")
+
+    print("Overall:", validation.overall_status)
+
+    print("\nRegression test:")
+    print("  Status:", validation.regression_test.status)
+    print("  Failed:", validation.regression_test.failed_tests)
+
+    print("\nExisting suite:")
+    print("  Status:", validation.existing_suite.status)
+    print("  Failed:", validation.existing_suite.failed_tests)
+    
     print("\nPATCH RESULT")
     print("------------------")
     print(patch_result)
 
-except Exception as e:  # noqa: BLE001
-        print("\nINVESTIGATOR ERROR")
-        print("------------------")
-        print(str(e))
+except Exception:  # noqa: BLE001
+    import traceback
+    traceback.print_exc()
+    raise
 
 
 # ============================================================

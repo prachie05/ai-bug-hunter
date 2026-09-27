@@ -1,8 +1,8 @@
 from openai import OpenAI
 
+from src.config import INVESTIGATOR_MODEL
 from src.investigator.state import InvestigatorState
 from src.patch_generator.prompts import PATCH_GENERATOR_PROMPT
-from src.config import INVESTIGATOR_MODEL
 from src.patch_generator.schemas import GeneratedPatch
 
 client = OpenAI()
